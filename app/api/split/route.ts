@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
     }
 
     const zipBuffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE", compressionOptions: { level: 6 } });
-    return new NextResponse(zipBuffer, {
+    return new Response(new Uint8Array(outputBuffer), {
       headers: {
         "Content-Type": "application/zip",
         "Content-Disposition": `attachment; filename="${baseName}-split.zip"`,
