@@ -221,7 +221,7 @@ export async function POST(request: NextRequest) {
     console.log("Reduction:", `${reductionPercent}%`);
     console.log("=================================");
 
-    return new NextResponse(output, {
+    return new Response(new Uint8Array(outputBuffer), {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
