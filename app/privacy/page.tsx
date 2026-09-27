@@ -10,7 +10,7 @@ export default function PrivacyPage() {
         <section className="tool-page">
           <div className="tool-heading">
             <h1>privacy.</h1>
-            <p>This page will contain Fold&apos;s privacy policy before launch.</p>
+            <p>saala kya hi likhu</p>
           </div>
         </section>
       </div>
