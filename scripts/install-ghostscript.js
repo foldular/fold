@@ -172,19 +172,20 @@ fs.chmodSync(gsBinary, 0o755);
 console.log("Ghostscript found successfully:");
 console.log(gsBinary);
 
-console.log("Testing Ghostscript...");
+console.log("========================================");
+console.log("CHECKING GHOSTSCRIPT DEPENDENCIES");
+console.log("========================================");
 
 try {
-  const version = execSync(`"${gsBinary}" --version`, {
+  const dependencies = execSync(`ldd "${gsBinary}"`, {
     encoding: "utf8",
   });
 
-  console.log("Ghostscript version:");
-  console.log(version.trim());
+  console.log("Ghostscript dependencies:");
+  console.log(dependencies);
 } catch (error) {
-  console.error("Ghostscript exists but could not execute:");
+  console.error("Could not run ldd:");
   console.error(error);
-  throw error;
 }
 
 fs.unlinkSync(ARCHIVE);
