@@ -49,8 +49,8 @@ const gsLibDir =
         process.cwd(),
         ".ghostscript",
         "ghostscript_linux",
-        "lib",
-        "x86_64-linux-gnu"
+        "usr",
+        "lib64"
       );
 
   try {
