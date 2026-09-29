@@ -54,7 +54,7 @@ async function main() {
     return;
   }
 
-  const gsBinary = path.join(GS_DIR, "bin", "gs");
+  const gsBinary = path.join(GS_DIR, "bin", "gs", "bin", "gs");
 
   if (fs.existsSync(gsBinary)) {
     console.log("Ghostscript already exists:", gsBinary);
