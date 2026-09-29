@@ -23,7 +23,10 @@ function download(url, destination) {
         response.headers.location
       ) {
         file.close();
-        fs.unlinkSync(destination);
+
+        if (fs.existsSync(destination)) {
+          fs.unlinkSync(destination);
+        }
 
         return download(response.headers.location, destination)
           .then(resolve)
@@ -80,6 +83,7 @@ async function main() {
    * Windows development continues to use the locally installed
    * gswin64c executable.
    */
+
   if (process.platform !== "linux") {
     console.log(
       "Ghostscript download skipped: not running on Linux."
@@ -92,10 +96,7 @@ async function main() {
   console.log("========================================");
 
   console.log("Platform:", process.platform);
-  console.log(
-    "Architecture:",
-    process.arch
-  );
+  console.log("Architecture:", process.arch);
 
   if (process.arch !== "x64") {
     throw new Error(
@@ -104,8 +105,11 @@ async function main() {
   }
 
   /*
-   * Start clean.
+   * ------------------------------------------------------------
+   * 1. Clean previous installation
+   * ------------------------------------------------------------
    */
+
   if (fs.existsSync(GS_DIR)) {
     fs.rmSync(GS_DIR, {
       recursive: true,
@@ -127,7 +131,7 @@ async function main() {
 
   /*
    * ------------------------------------------------------------
-   * 1. Download Ghostscript
+   * 2. Download Ghostscript
    * ------------------------------------------------------------
    */
 
@@ -144,7 +148,7 @@ async function main() {
 
   /*
    * ------------------------------------------------------------
-   * 2. Extract Ghostscript
+   * 3. Extract Ghostscript
    * ------------------------------------------------------------
    */
 
@@ -153,17 +157,6 @@ async function main() {
   run(
     `tar -xJf "${ARCHIVE}" -C "${GS_DIR}"`
   );
-
-  /*
-   * Actual Ghostscript binary path discovered from the archive:
-   *
-   * .ghostscript/
-   * └── ghostscript_linux/
-   *     └── usr/
-   *         └── local/
-   *             └── bin/
-   *                 └── gs
-   */
 
   const gsRoot = path.join(
     GS_DIR,
@@ -178,17 +171,19 @@ async function main() {
     "gs"
   );
 
+  if (!fs.existsSync(gsBinary)) {
+    throw new Error(
+      `Ghostscript binary was not found at ${gsBinary}`
+    );
+  }
+
+  console.log("Ghostscript binary found:");
+  console.log(gsBinary);
+
   /*
    * ------------------------------------------------------------
-   * 3. Find a real libidn.so.11
+   * 4. Download Amazon Linux libidn RPM
    * ------------------------------------------------------------
-   *
-   * The Ghostscript archive contains a 17-byte text placeholder
-   * called libidn.so.11. We MUST NOT use that file.
-   *
-   * Amazon Linux 2023 provides the real libidn package for
-   * x86_64, so we download its RPM using dnf's repository
-   * metadata and extract the real shared library.
    */
 
   console.log("========================================");
@@ -205,11 +200,13 @@ async function main() {
       }
     )
       .trim()
-      .split("\n")[0];
+      .split("\n")
+      .filter(Boolean)[0];
   } catch (error) {
     console.error(
       "Could not locate the Amazon Linux libidn RPM."
     );
+
     throw error;
   }
 
@@ -235,89 +232,112 @@ async function main() {
 
   /*
    * ------------------------------------------------------------
-   * 4. Extract the RPM
+   * 5. Extract RPM into a completely separate directory
    * ------------------------------------------------------------
-   *
-   * We extract it into the Ghostscript root instead of installing
-   * anything into the Vercel operating system.
    */
 
-console.log("Extracting libidn...");
+  console.log("========================================");
+  console.log("EXTRACTING libidn RPM");
+  console.log("========================================");
 
-const libExtractDir = path.join(
-  GS_DIR,
-  "libidn-root"
-);
+  const libExtractDir = path.join(
+    GS_DIR,
+    "libidn-root"
+  );
 
-if (fs.existsSync(libExtractDir)) {
-  fs.rmSync(libExtractDir, {
+  if (fs.existsSync(libExtractDir)) {
+    fs.rmSync(libExtractDir, {
+      recursive: true,
+      force: true,
+    });
+  }
+
+  fs.mkdirSync(libExtractDir, {
     recursive: true,
-    force: true,
   });
-}
 
-fs.mkdirSync(libExtractDir, {
-  recursive: true,
-});
+  run(
+    `rpm --root="${libExtractDir}" --initdb`
+  );
 
-run(
-  `rpm --root="${libExtractDir}" --initdb`
-);
-
-run(
-  `rpm -Uvh --root="${libExtractDir}" --nodeps "${LIBIDN_RPM}"`
-);
+  run(
+    `rpm -Uvh --root="${libExtractDir}" --nodeps "${LIBIDN_RPM}"`
+  );
 
   /*
-   * The RPM should place the library here:
-   *
-   * ghostscript_linux/usr/lib64/libidn.so.11
-   *
-   * Depending on the RPM layout, locate it dynamically.
+   * ------------------------------------------------------------
+   * 6. Find ONLY the libidn installed by the RPM
+   * ------------------------------------------------------------
    */
 
   let libidnPath = null;
 
   try {
-const result = execSync(
-  `find "${libExtractDir}" -type f -name "libidn.so.11*"`,
+    const result = execSync(
+      `find "${libExtractDir}" -type f -name "libidn.so.11*"`,
       {
         encoding: "utf8",
       }
     )
       .trim()
       .split("\n")
+      .map((value) => value.trim())
       .filter(Boolean);
 
-    if (result.length > 0) {
-      /*
-       * Prefer the actual SONAME file rather than a versioned
-       * library file.
-       */
-      libidnPath =
-        result.find((file) =>
-          file.endsWith("/libidn.so.11")
-        ) || result[0];
+    console.log("Files found inside RPM root:");
+
+    for (const file of result) {
+      console.log(file);
     }
+
+    /*
+     * Only accept a real file that is larger than 1 KB.
+     * This prevents the 17-byte placeholder from ever being used.
+     */
+
+    const validLibraries = result.filter((file) => {
+      try {
+        const size = fs.statSync(file).size;
+
+        console.log(
+          "Checking:",
+          file,
+          "size:",
+          size
+        );
+
+        return size >= 1000;
+      } catch {
+        return false;
+      }
+    });
+
+    libidnPath =
+      validLibraries.find((file) =>
+        file.endsWith("/libidn.so.11")
+      ) ||
+      validLibraries[0] ||
+      null;
   } catch (error) {
     console.error(
       "Could not search for extracted libidn."
     );
+
     throw error;
   }
 
   if (!libidnPath) {
     throw new Error(
-      "Real libidn.so.11 was not found after extracting the Amazon Linux RPM."
+      "A valid libidn.so.11 was not found inside the extracted Amazon Linux RPM."
     );
   }
 
-  console.log("Real libidn found:");
+  console.log("========================================");
+  console.log("REAL libidn FOUND");
+  console.log("========================================");
+
   console.log(libidnPath);
 
-  /*
-   * Verify that the file is actually a shared library.
-   */
   const libidnSize = fs.statSync(
     libidnPath
   ).size;
@@ -328,15 +348,9 @@ const result = execSync(
     "bytes"
   );
 
-  if (libidnSize < 1000) {
-    throw new Error(
-      `libidn.so.11 looks invalid. File size is only ${libidnSize} bytes.`
-    );
-  }
-
   /*
    * ------------------------------------------------------------
-   * 5. Determine the directory containing libidn
+   * 7. Determine library directory
    * ------------------------------------------------------------
    */
 
@@ -344,23 +358,14 @@ const result = execSync(
     libidnPath
   );
 
-  console.log(
-    "Ghostscript library directory:"
-  );
-
+  console.log("Library directory:");
   console.log(gsLibDir);
 
   /*
    * ------------------------------------------------------------
-   * 6. Make Ghostscript executable
+   * 8. Make Ghostscript executable
    * ------------------------------------------------------------
    */
-
-  if (!fs.existsSync(gsBinary)) {
-    throw new Error(
-      `Ghostscript binary was not found at ${gsBinary}`
-    );
-  }
 
   fs.chmodSync(
     gsBinary,
@@ -369,7 +374,7 @@ const result = execSync(
 
   /*
    * ------------------------------------------------------------
-   * 7. Configure runtime library search path
+   * 9. Configure LD_LIBRARY_PATH
    * ------------------------------------------------------------
    */
 
@@ -400,7 +405,7 @@ const result = execSync(
 
   /*
    * ------------------------------------------------------------
-   * 8. Test Ghostscript
+   * 10. Test Ghostscript
    * ------------------------------------------------------------
    */
 
@@ -434,7 +439,7 @@ const result = execSync(
 
   /*
    * ------------------------------------------------------------
-   * 9. Clean temporary files
+   * 11. Remove temporary archives
    * ------------------------------------------------------------
    */
 
@@ -448,7 +453,7 @@ const result = execSync(
 
   /*
    * ------------------------------------------------------------
-   * 10. Final verification
+   * 12. Final output
    * ------------------------------------------------------------
    */
 
@@ -465,7 +470,7 @@ const result = execSync(
   console.log(gsBinary);
 
   console.log(
-    "libidn.so.11:"
+    "Real libidn.so.11:"
   );
 
   console.log(libidnPath);
