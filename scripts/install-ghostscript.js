@@ -1,7 +1,6 @@
 const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
-
 const https = require("https");
 
 const ROOT = path.resolve(__dirname, "..");
@@ -15,83 +14,143 @@ function download(url, destination) {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(destination);
 
-    https.get(url, (response) => {
-      if (
-        response.statusCode >= 300 &&
-        response.statusCode < 400 &&
-        response.headers.location
-      ) {
+    https
+      .get(url, (response) => {
+        if (
+          response.statusCode >= 300 &&
+          response.statusCode < 400 &&
+          response.headers.location
+        ) {
+          file.close();
+          fs.unlinkSync(destination);
+
+          return download(response.headers.location, destination)
+            .then(resolve)
+            .catch(reject);
+        }
+
+        if (response.statusCode !== 200) {
+          reject(
+            new Error(`Download failed with HTTP ${response.statusCode}`)
+          );
+          return;
+        }
+
+        response.pipe(file);
+
+        file.on("finish", () => {
+          file.close(resolve);
+        });
+      })
+      .on("error", (error) => {
         file.close();
-        fs.unlinkSync(destination);
-        return download(response.headers.location, destination)
-          .then(resolve)
-          .catch(reject);
-      }
-
-      if (response.statusCode !== 200) {
-        reject(
-          new Error(`Download failed with HTTP ${response.statusCode}`)
-        );
-        return;
-      }
-
-      response.pipe(file);
-
-      file.on("finish", () => {
-        file.close(resolve);
+        reject(error);
       });
-    }).on("error", (error) => {
-      file.close();
-      reject(error);
-    });
   });
 }
 
+function printTree(dir, prefix = "") {
+  if (!fs.existsSync(dir)) {
+    console.log(`DOES NOT EXIST: ${dir}`);
+    return;
+  }
+
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+
+    console.log(
+      `${prefix}${entry.isDirectory() ? "[DIR] " : "[FILE] "}${fullPath}`
+    );
+
+    if (entry.isDirectory()) {
+      printTree(fullPath, prefix + "  ");
+    }
+  }
+}
+
 async function main() {
-  // Only download Ghostscript on Linux/Vercel.
   if (process.platform !== "linux") {
     console.log("Ghostscript download skipped: not running on Linux.");
     return;
   }
 
-  const gsBinary = path.join(GS_DIR, "bin", "gs", "bin", "gs");
+  console.log("========================================");
+  console.log("GHOSTSCRIPT DIAGNOSTIC");
+  console.log("========================================");
 
-  if (fs.existsSync(gsBinary)) {
-    console.log("Ghostscript already exists:", gsBinary);
-    return;
+  console.log("ROOT:");
+  console.log(ROOT);
+
+  console.log("GS_DIR:");
+  console.log(GS_DIR);
+
+  console.log("ARCHIVE:");
+  console.log(ARCHIVE);
+
+  console.log("DOWNLOAD URL:");
+  console.log(URL);
+
+  console.log("========================================");
+
+  if (fs.existsSync(GS_DIR)) {
+    fs.rmSync(GS_DIR, { recursive: true, force: true });
   }
+
+  fs.mkdirSync(GS_DIR, { recursive: true });
 
   console.log("Downloading Linux Ghostscript...");
 
-  if (!fs.existsSync(GS_DIR)) {
-    fs.mkdirSync(GS_DIR, { recursive: true });
-  }
-
   await download(URL, ARCHIVE);
 
+  console.log("Archive downloaded:");
+  console.log(ARCHIVE);
+
+  console.log("Archive size:");
+  console.log(fs.statSync(ARCHIVE).size, "bytes");
+
+  console.log("========================================");
   console.log("Extracting Ghostscript...");
+  console.log("========================================");
 
   execSync(
     `tar -xJf "${ARCHIVE}" -C "${GS_DIR}"`,
     { stdio: "inherit" }
   );
 
-  fs.unlinkSync(ARCHIVE);
+  console.log("========================================");
+  console.log("EXTRACTED FILE TREE");
+  console.log("========================================");
 
-  if (!fs.existsSync(gsBinary)) {
-    throw new Error(
-      `Ghostscript binary was not found at ${gsBinary}`
+  printTree(GS_DIR);
+
+  console.log("========================================");
+  console.log("SEARCHING FOR GHOSTSCRIPT EXECUTABLE");
+  console.log("========================================");
+
+  try {
+    const result = execSync(
+      `find "${GS_DIR}" -type f -name "gs" -o -name "gswin64c.exe"`,
+      { encoding: "utf8" }
     );
+
+    console.log("FOUND:");
+    console.log(result || "Nothing found");
+  } catch (error) {
+    console.log("find command returned no matches.");
   }
 
-  fs.chmodSync(gsBinary, 0o755);
+  console.log("========================================");
+  console.log("DIAGNOSTIC COMPLETE");
+  console.log("========================================");
 
-  console.log("Ghostscript installed successfully:");
-  console.log(gsBinary);
+  // DO NOT FAIL THE BUILD YET.
+  // We only want to inspect the actual archive structure.
 }
 
 main().catch((error) => {
-  console.error("Ghostscript installation failed:");
+  console.error("Ghostscript diagnostic failed:");
   console.error(error);
   process.exit(1);
 });
