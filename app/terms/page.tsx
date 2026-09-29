@@ -10,7 +10,7 @@ export default function TermsPage() {
         <section className="tool-page">
           <div className="tool-heading">
             <h1>terms.</h1>
-            <p>This page will contain Fold&apos;s terms before launch.</p>
+            <p>🥸🥸</p>
           </div>
         </section>
       </div>
