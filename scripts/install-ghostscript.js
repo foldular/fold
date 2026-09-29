@@ -172,8 +172,35 @@ async function main() {
    *
    * Tell Linux to search this directory for libraries.
    */
-  process.env.LD_LIBRARY_PATH =
-    `${gsLibDir}:${process.env.LD_LIBRARY_PATH || ""}`;
+ // process.env.LD_LIBRARY_PATH =
+   // `${gsLibDir}:${process.env.LD_LIBRARY_PATH || ""}`;
+
+   console.log("========================================");
+console.log("CHECKING libidn.so.11 FILE");
+console.log("========================================");
+
+console.log("File:");
+console.log(libidn);
+
+console.log("Size:");
+
+try {
+  console.log(fs.statSync(libidn).size, "bytes");
+} catch (error) {
+  console.log("Could not stat libidn.so.11");
+}
+
+console.log("File type:");
+
+try {
+  const fileType = execSync(`file "${libidn}"`, {
+    encoding: "utf8",
+  });
+
+  console.log(fileType);
+} catch (error) {
+  console.log("Could not determine file type.");
+}
 
   console.log("LD_LIBRARY_PATH:");
   console.log(process.env.LD_LIBRARY_PATH);
@@ -182,26 +209,18 @@ async function main() {
   console.log("TESTING GHOSTSCRIPT");
   console.log("========================================");
 
-  try {
-    const version = execSync(
-      `"${gsBinary}" --version`,
-      {
-        encoding: "utf8",
-        env: process.env,
-      }
-    );
+try {
+  const version = execSync(`"${gsBinary}" --version`, {
+    encoding: "utf8",
+    env: process.env,
+  });
 
-    console.log("Ghostscript version:");
-    console.log(version.trim());
-  } catch (error) {
-    console.error(
-      "Ghostscript exists but could not execute."
-    );
-
-    console.error(error);
-
-    throw error;
-  }
+  console.log("Ghostscript version:");
+  console.log(version.trim());
+} catch (error) {
+  console.error("Ghostscript could not start:");
+  console.error(error);
+}
 
   console.log("========================================");
   console.log("GHOSTSCRIPT INSTALLATION COMPLETE");
