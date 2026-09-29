@@ -280,7 +280,7 @@ run(
 
   try {
 const result = execSync(
-  `find "${GS_DIR}" -type f -name "libidn.so.11*"`,
+  `find "${libExtractDir}" -type f -name "libidn.so.11*"`,
       {
         encoding: "utf8",
       }
