@@ -30,7 +30,17 @@ async function tryGhostscript(
   const outputPath = path.join(tempDir, "output.pdf");
 
   const gsExecutable =
-    process.platform === "win32" ? "gswin64c" : "gs";
+    process.platform === "win32"
+      ? "gswin64c"
+      : path.join(
+          process.cwd(),
+          "node_modules",
+          "compress-pdf",
+          "bin",
+          "gs",
+          "bin",
+          "gs"
+        );
 
   try {
     await fs.writeFile(inputPath, input);
