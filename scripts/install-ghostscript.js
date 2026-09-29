@@ -206,6 +206,31 @@ try {
   console.log(process.env.LD_LIBRARY_PATH);
 
   console.log("========================================");
+console.log("VERCEL LINUX ENVIRONMENT");
+console.log("========================================");
+
+try {
+  console.log(
+    execSync("cat /etc/os-release", {
+      encoding: "utf8",
+    })
+  );
+} catch (error) {
+  console.log("Could not read /etc/os-release");
+}
+
+try {
+  console.log(
+    "Architecture:",
+    execSync("uname -m", {
+      encoding: "utf8",
+    }).trim()
+  );
+} catch (error) {
+  console.log("Could not determine architecture");
+}
+
+  console.log("========================================");
   console.log("TESTING GHOSTSCRIPT");
   console.log("========================================");
 
