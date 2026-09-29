@@ -242,11 +242,31 @@ async function main() {
    * anything into the Vercel operating system.
    */
 
-  console.log("Extracting libidn...");
+console.log("Extracting libidn...");
 
-  run(
-    `rpm2cpio "${LIBIDN_RPM}" | (cd "${gsRoot}" && cpio -idm)`
-  );
+const libExtractDir = path.join(
+  GS_DIR,
+  "libidn-root"
+);
+
+if (fs.existsSync(libExtractDir)) {
+  fs.rmSync(libExtractDir, {
+    recursive: true,
+    force: true,
+  });
+}
+
+fs.mkdirSync(libExtractDir, {
+  recursive: true,
+});
+
+run(
+  `rpm --root="${libExtractDir}" --initdb`
+);
+
+run(
+  `rpm -Uvh --root="${libExtractDir}" --nodeps "${LIBIDN_RPM}"`
+);
 
   /*
    * The RPM should place the library here:
@@ -259,8 +279,8 @@ async function main() {
   let libidnPath = null;
 
   try {
-    const result = execSync(
-      `find "${gsRoot}" -type f -name "libidn.so.11*"`,
+const result = execSync(
+  `find "${GS_DIR}" -type f -name "libidn.so.11*"`,
       {
         encoding: "utf8",
       }
