@@ -1,16 +1,15 @@
 const fs = require("fs");
 const path = require("path");
-const { execSync } = require("child_process");
+const { execFileSync } = require("child_process");
 const https = require("https");
 
 const ROOT = path.resolve(__dirname, "..");
-
 const GS_DIR = path.join(ROOT, ".ghostscript");
-const ARCHIVE = path.join(ROOT, "ghostscript_linux.tar.xz");
-const LIBIDN_RPM = path.join(ROOT, "libidn.x86_64.rpm");
+const ARCHIVE = path.join(ROOT, "ghostscript-10.08.0.tar.xz");
 
+const GHOSTSCRIPT_VERSION = "10.08.0";
 const GHOSTSCRIPT_URL =
-  "https://github.com/victorsoares96/compress-pdf/releases/download/binaries/ghostscript_linux.tar.xz";
+  `https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10080/ghostscript-${GHOSTSCRIPT_VERSION}.tar.xz`;
 
 function download(url, destination) {
   return new Promise((resolve, reject) => {
@@ -41,9 +40,7 @@ function download(url, destination) {
         }
 
         reject(
-          new Error(
-            `Download failed with HTTP ${response.statusCode}`
-          )
+          new Error(`Download failed with HTTP ${response.statusCode}`)
         );
 
         return;
@@ -68,46 +65,55 @@ function download(url, destination) {
   });
 }
 
-function run(command, options = {}) {
-  console.log(`> ${command}`);
+function run(command, args, options = {}) {
+  console.log(
+    `> ${command} ${args
+      .map((arg) => JSON.stringify(String(arg)))
+      .join(" ")}`
+  );
 
-  return execSync(command, {
+  return execFileSync(command, args, {
     stdio: "inherit",
+    ...options,
+  });
+}
+
+function runCapture(command, args, options = {}) {
+  return execFileSync(command, args, {
+    encoding: "utf8",
     ...options,
   });
 }
 
 async function main() {
   /*
-   * Ghostscript is only installed during the Linux/Vercel build.
+   * Ghostscript is built only during the Linux/Vercel build.
    * Windows development continues to use the locally installed
    * gswin64c executable.
    */
 
   if (process.platform !== "linux") {
     console.log(
-      "Ghostscript download skipped: not running on Linux."
+      "Ghostscript build skipped: not running on Linux."
     );
     return;
   }
 
-  console.log("========================================");
-  console.log("INSTALLING GHOSTSCRIPT FOR VERCEL");
-  console.log("========================================");
-
-  console.log("Platform:", process.platform);
-  console.log("Architecture:", process.arch);
-
   if (process.arch !== "x64") {
     throw new Error(
-      `This Ghostscript package requires x86_64. Detected: ${process.arch}`
+      `This Ghostscript build currently expects x86_64. Detected: ${process.arch}`
     );
   }
 
+  console.log("========================================");
+  console.log("BUILDING GHOSTSCRIPT FOR VERCEL");
+  console.log("========================================");
+  console.log("Platform:", process.platform);
+  console.log("Architecture:", process.arch);
+  console.log("Ghostscript:", GHOSTSCRIPT_VERSION);
+
   /*
-   * ------------------------------------------------------------
-   * 1. Clean previous installation
-   * ------------------------------------------------------------
+   * Start clean so stale binaries/libraries can never be reused.
    */
 
   if (fs.existsSync(GS_DIR)) {
@@ -121,251 +127,168 @@ async function main() {
     fs.unlinkSync(ARCHIVE);
   }
 
-  if (fs.existsSync(LIBIDN_RPM)) {
-    fs.unlinkSync(LIBIDN_RPM);
-  }
-
   fs.mkdirSync(GS_DIR, {
     recursive: true,
   });
 
   /*
    * ------------------------------------------------------------
-   * 2. Download Ghostscript
+   * 1. Download official Ghostscript source
    * ------------------------------------------------------------
    */
 
-  console.log("Downloading Linux Ghostscript...");
+  console.log("========================================");
+  console.log("DOWNLOADING OFFICIAL GHOSTSCRIPT SOURCE");
+  console.log("========================================");
+
+  console.log(GHOSTSCRIPT_URL);
 
   await download(
     GHOSTSCRIPT_URL,
     ARCHIVE
   );
 
-  console.log(
-    "Ghostscript archive downloaded."
+  /*
+   * ------------------------------------------------------------
+   * 2. Extract Ghostscript
+   * ------------------------------------------------------------
+   */
+
+  const sourceParent = path.join(
+    GS_DIR,
+    "source"
+  );
+
+  fs.mkdirSync(sourceParent, {
+    recursive: true,
+  });
+
+  console.log("========================================");
+  console.log("EXTRACTING GHOSTSCRIPT");
+  console.log("========================================");
+
+  run(
+    "tar",
+    [
+      "-xJf",
+      ARCHIVE,
+      "-C",
+      sourceParent,
+    ]
+  );
+
+  const sourceDir = path.join(
+    sourceParent,
+    `ghostscript-${GHOSTSCRIPT_VERSION}`
+  );
+
+  if (!fs.existsSync(sourceDir)) {
+    throw new Error(
+      `Ghostscript source directory not found: ${sourceDir}`
+    );
+  }
+
+  /*
+   * ------------------------------------------------------------
+   * 3. Installation directory
+   * ------------------------------------------------------------
+   */
+
+  const installDir = path.join(
+    GS_DIR,
+    "runtime"
   );
 
   /*
    * ------------------------------------------------------------
-   * 3. Extract Ghostscript
+   * 4. Configure Ghostscript
+   * ------------------------------------------------------------
+   *
+   * IMPORTANT:
+   * --without-libidn prevents the old libidn.so.11 dependency
+   * that caused the previous Vercel build to fail.
+   */
+
+  console.log("========================================");
+  console.log("CONFIGURING GHOSTSCRIPT");
+  console.log("========================================");
+
+  run(
+    "./configure",
+    [
+      `--prefix=${installDir}`,
+      "--without-libidn",
+      "--without-tesseract",
+      "--disable-fontconfig",
+      "--disable-cups",
+      "--disable-dbus",
+      "--disable-gtk",
+      "--disable-x",
+      "--disable-contrib",
+      "--with-local-zlib",
+      "--with-local-brotli",
+    ],
+    {
+      cwd: sourceDir,
+    }
+  );
+
+  /*
+   * ------------------------------------------------------------
+   * 5. Compile Ghostscript
    * ------------------------------------------------------------
    */
 
-  console.log("Extracting Ghostscript...");
+  console.log("========================================");
+  console.log("COMPILING GHOSTSCRIPT");
+  console.log("========================================");
 
   run(
-    `tar -xJf "${ARCHIVE}" -C "${GS_DIR}"`
+    "make",
+    [
+      "-j2",
+    ],
+    {
+      cwd: sourceDir,
+    }
   );
 
-  const gsRoot = path.join(
-    GS_DIR,
-    "ghostscript_linux"
+  /*
+   * ------------------------------------------------------------
+   * 6. Install Ghostscript into .ghostscript/runtime
+   * ------------------------------------------------------------
+   */
+
+  console.log("========================================");
+  console.log("INSTALLING GHOSTSCRIPT");
+  console.log("========================================");
+
+  run(
+    "make",
+    [
+      "install",
+    ],
+    {
+      cwd: sourceDir,
+    }
   );
 
   const gsBinary = path.join(
-    gsRoot,
-    "usr",
-    "local",
+    installDir,
     "bin",
     "gs"
   );
 
+  const gsLibDir = path.join(
+    installDir,
+    "lib"
+  );
+
   if (!fs.existsSync(gsBinary)) {
     throw new Error(
-      `Ghostscript binary was not found at ${gsBinary}`
+      `Ghostscript binary was not installed at ${gsBinary}`
     );
   }
-
-  console.log("Ghostscript binary found:");
-  console.log(gsBinary);
-
-  /*
-   * ------------------------------------------------------------
-   * 4. Download Amazon Linux libidn RPM
-   * ------------------------------------------------------------
-   */
-
-  console.log("========================================");
-  console.log("GETTING AMAZON LINUX libidn");
-  console.log("========================================");
-
-  let rpmUrl;
-
-  try {
-    rpmUrl = execSync(
-      "dnf repoquery --location --arch=x86_64 libidn",
-      {
-        encoding: "utf8",
-      }
-    )
-      .trim()
-      .split("\n")
-      .filter(Boolean)[0];
-  } catch (error) {
-    console.error(
-      "Could not locate the Amazon Linux libidn RPM."
-    );
-
-    throw error;
-  }
-
-  if (!rpmUrl) {
-    throw new Error(
-      "Amazon Linux libidn RPM URL was not found."
-    );
-  }
-
-  console.log("libidn RPM:");
-  console.log(rpmUrl);
-
-  console.log("Downloading libidn RPM...");
-
-  await download(
-    rpmUrl,
-    LIBIDN_RPM
-  );
-
-  console.log(
-    "libidn RPM downloaded."
-  );
-
-  /*
-   * ------------------------------------------------------------
-   * 5. Extract RPM into a completely separate directory
-   * ------------------------------------------------------------
-   */
-
-  console.log("========================================");
-  console.log("EXTRACTING libidn RPM");
-  console.log("========================================");
-
-  const libExtractDir = path.join(
-    GS_DIR,
-    "libidn-root"
-  );
-
-  if (fs.existsSync(libExtractDir)) {
-    fs.rmSync(libExtractDir, {
-      recursive: true,
-      force: true,
-    });
-  }
-
-  fs.mkdirSync(libExtractDir, {
-    recursive: true,
-  });
-
-  run(
-    `rpm --root="${libExtractDir}" --initdb`
-  );
-
-  run(
-    `rpm -Uvh --root="${libExtractDir}" --nodeps "${LIBIDN_RPM}"`
-  );
-
-  /*
-   * ------------------------------------------------------------
-   * 6. Find ONLY the libidn installed by the RPM
-   * ------------------------------------------------------------
-   */
-
-  let libidnPath = null;
-
-  try {
-    const result = execSync(
-      `find "${libExtractDir}" -type f -name "libidn.so.11*"`,
-      {
-        encoding: "utf8",
-      }
-    )
-      .trim()
-      .split("\n")
-      .map((value) => value.trim())
-      .filter(Boolean);
-
-    console.log("Files found inside RPM root:");
-
-    for (const file of result) {
-      console.log(file);
-    }
-
-    /*
-     * Only accept a real file that is larger than 1 KB.
-     * This prevents the 17-byte placeholder from ever being used.
-     */
-
-    const validLibraries = result.filter((file) => {
-      try {
-        const size = fs.statSync(file).size;
-
-        console.log(
-          "Checking:",
-          file,
-          "size:",
-          size
-        );
-
-        return size >= 1000;
-      } catch {
-        return false;
-      }
-    });
-
-    libidnPath =
-      validLibraries.find((file) =>
-        file.endsWith("/libidn.so.11")
-      ) ||
-      validLibraries[0] ||
-      null;
-  } catch (error) {
-    console.error(
-      "Could not search for extracted libidn."
-    );
-
-    throw error;
-  }
-
-  if (!libidnPath) {
-    throw new Error(
-      "A valid libidn.so.11 was not found inside the extracted Amazon Linux RPM."
-    );
-  }
-
-  console.log("========================================");
-  console.log("REAL libidn FOUND");
-  console.log("========================================");
-
-  console.log(libidnPath);
-
-  const libidnSize = fs.statSync(
-    libidnPath
-  ).size;
-
-  console.log(
-    "libidn size:",
-    libidnSize,
-    "bytes"
-  );
-
-  /*
-   * ------------------------------------------------------------
-   * 7. Determine library directory
-   * ------------------------------------------------------------
-   */
-
-  const gsLibDir = path.dirname(
-    libidnPath
-  );
-
-  console.log("Library directory:");
-  console.log(gsLibDir);
-
-  /*
-   * ------------------------------------------------------------
-   * 8. Make Ghostscript executable
-   * ------------------------------------------------------------
-   */
 
   fs.chmodSync(
     gsBinary,
@@ -374,117 +297,118 @@ async function main() {
 
   /*
    * ------------------------------------------------------------
-   * 9. Configure LD_LIBRARY_PATH
+   * 7. Check runtime dependencies
    * ------------------------------------------------------------
    */
 
-  process.env.LD_LIBRARY_PATH = [
-    gsLibDir,
-    process.env.LD_LIBRARY_PATH || "",
-  ]
-    .filter(Boolean)
-    .join(":");
-
   console.log("========================================");
-  console.log("GHOSTSCRIPT CONFIGURATION");
+  console.log("CHECKING GHOSTSCRIPT DEPENDENCIES");
   console.log("========================================");
 
-  console.log(
-    "Ghostscript:"
-  );
+  const env = {
+    ...process.env,
 
-  console.log(gsBinary);
+    LD_LIBRARY_PATH: [
+      gsLibDir,
+      process.env.LD_LIBRARY_PATH || "",
+    ]
+      .filter(Boolean)
+      .join(":"),
+  };
+
+  /*
+   * Test Ghostscript version
+   */
+
+  const version = runCapture(
+    gsBinary,
+    [
+      "--version",
+    ],
+    {
+      env,
+    }
+  ).trim();
 
   console.log(
-    "LD_LIBRARY_PATH:"
-  );
-
-  console.log(
-    process.env.LD_LIBRARY_PATH
+    "Ghostscript version:",
+    version
   );
 
   /*
-   * ------------------------------------------------------------
-   * 10. Test Ghostscript
-   * ------------------------------------------------------------
+   * Check linked libraries
    */
 
-  console.log("========================================");
-  console.log("TESTING GHOSTSCRIPT");
-  console.log("========================================");
+  const lddOutput = runCapture(
+    "ldd",
+    [
+      gsBinary,
+    ],
+    {
+      env,
+    }
+  );
 
-  try {
-    const version = execSync(
-      `"${gsBinary}" --version`,
-      {
-        encoding: "utf8",
-        env: process.env,
-      }
-    );
+  console.log(lddOutput);
 
-    console.log(
-      "Ghostscript version:"
+  if (/not found/i.test(lddOutput)) {
+    throw new Error(
+      "Ghostscript has unresolved shared-library dependencies. See the ldd output above."
     );
-
-    console.log(
-      version.trim()
-    );
-  } catch (error) {
-    console.error(
-      "Ghostscript could not start."
-    );
-
-    throw error;
   }
 
   /*
    * ------------------------------------------------------------
-   * 11. Remove temporary archives
+   * 8. Clean source/archive
    * ------------------------------------------------------------
+   *
+   * Keep only:
+   *
+   * .ghostscript/runtime
+   *
+   * because that is what the deployed API needs.
    */
+
+  console.log("========================================");
+  console.log("CLEANING BUILD FILES");
+  console.log("========================================");
+
+  fs.rmSync(
+    sourceParent,
+    {
+      recursive: true,
+      force: true,
+    }
+  );
 
   if (fs.existsSync(ARCHIVE)) {
     fs.unlinkSync(ARCHIVE);
   }
 
-  if (fs.existsSync(LIBIDN_RPM)) {
-    fs.unlinkSync(LIBIDN_RPM);
-  }
-
   /*
    * ------------------------------------------------------------
-   * 12. Final output
+   * 9. Final output
    * ------------------------------------------------------------
    */
 
   console.log("========================================");
-  console.log(
-    "GHOSTSCRIPT INSTALLATION COMPLETE"
-  );
+  console.log("GHOSTSCRIPT BUILD COMPLETE");
   console.log("========================================");
 
   console.log(
-    "Ghostscript binary:"
+    "Binary:",
+    gsBinary
   );
-
-  console.log(gsBinary);
 
   console.log(
-    "Real libidn.so.11:"
+    "Libraries:",
+    gsLibDir
   );
-
-  console.log(libidnPath);
-
-  console.log(
-    "Library directory:"
-  );
-
-  console.log(gsLibDir);
 }
 
 main().catch((error) => {
   console.error(
-    "Ghostscript installation failed:"
+    "Ghostscript build failed:"
   );
 
   console.error(error);
