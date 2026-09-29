@@ -34,10 +34,7 @@ async function tryGhostscript(
       ? "gswin64c"
       : path.join(
           process.cwd(),
-          "node_modules",
-          "compress-pdf",
-          "bin",
-          "gs",
+          ".ghostscript",
           "bin",
           "gs"
         );

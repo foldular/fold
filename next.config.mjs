@@ -4,7 +4,7 @@ const nextConfig = {
 
   outputFileTracingIncludes: {
   "/api/compress": [
-    "./node_modules/compress-pdf/bin/gs/**/*",
+     "./.ghostscript/**/*",
   ],
 },
 };
