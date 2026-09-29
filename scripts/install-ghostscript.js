@@ -55,7 +55,9 @@ function printTree(dir, prefix = "") {
     return;
   }
 
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  const entries = fs.readdirSync(dir, {
+    withFileTypes: true,
+  });
 
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
@@ -72,12 +74,14 @@ function printTree(dir, prefix = "") {
 
 async function main() {
   if (process.platform !== "linux") {
-    console.log("Ghostscript download skipped: not running on Linux.");
+    console.log(
+      "Ghostscript download skipped: not running on Linux."
+    );
     return;
   }
 
   console.log("========================================");
-  console.log("GHOSTSCRIPT DIAGNOSTIC");
+  console.log("GHOSTSCRIPT INSTALLATION");
   console.log("========================================");
 
   console.log("ROOT:");
@@ -94,11 +98,17 @@ async function main() {
 
   console.log("========================================");
 
+  // Start clean
   if (fs.existsSync(GS_DIR)) {
-    fs.rmSync(GS_DIR, { recursive: true, force: true });
+    fs.rmSync(GS_DIR, {
+      recursive: true,
+      force: true,
+    });
   }
 
-  fs.mkdirSync(GS_DIR, { recursive: true });
+  fs.mkdirSync(GS_DIR, {
+    recursive: true,
+  });
 
   console.log("Downloading Linux Ghostscript...");
 
@@ -116,7 +126,9 @@ async function main() {
 
   execSync(
     `tar -xJf "${ARCHIVE}" -C "${GS_DIR}"`,
-    { stdio: "inherit" }
+    {
+      stdio: "inherit",
+    }
   );
 
   console.log("========================================");
@@ -129,74 +141,101 @@ async function main() {
   console.log("SEARCHING FOR GHOSTSCRIPT EXECUTABLE");
   console.log("========================================");
 
+  let gsBinary = null;
+
   try {
     const result = execSync(
-      `find "${GS_DIR}" -type f -name "gs" -o -name "gswin64c.exe"`,
-      { encoding: "utf8" }
+      `find "${GS_DIR}" -type f -name "gs"`,
+      {
+        encoding: "utf8",
+      }
+    ).trim();
+
+    if (result) {
+      console.log("FOUND:");
+      console.log(result);
+
+      // Use the first matching Ghostscript binary
+      gsBinary = result.split("\n")[0].trim();
+    } else {
+      console.log("Ghostscript executable NOT FOUND.");
+    }
+  } catch (error) {
+    console.log("Could not search for Ghostscript executable.");
+  }
+
+  console.log("========================================");
+  console.log("GHOSTSCRIPT BINARY");
+  console.log("========================================");
+
+  if (!gsBinary) {
+    throw new Error(
+      "Ghostscript executable could not be found."
+    );
+  }
+
+  console.log("Using:");
+  console.log(gsBinary);
+
+  console.log("========================================");
+  console.log("CHECKING GHOSTSCRIPT DEPENDENCIES");
+  console.log("========================================");
+
+  try {
+    const dependencies = execSync(
+      `ldd "${gsBinary}"`,
+      {
+        encoding: "utf8",
+      }
     );
 
-    console.log("FOUND:");
-    console.log(result || "Nothing found");
+    console.log("Ghostscript dependencies:");
+    console.log(dependencies);
   } catch (error) {
-    console.log("find command returned no matches.");
+    console.error("Could not run ldd:");
+    console.error(error);
+  }
+
+  console.log("========================================");
+  console.log("SEARCHING FOR libidn.so.11");
+  console.log("========================================");
+
+  try {
+    const result = execSync(
+      `find "${GS_DIR}" -name "libidn.so.11*" -type f`,
+      {
+        encoding: "utf8",
+      }
+    ).trim();
+
+    if (result) {
+      console.log("libidn.so.11 FOUND:");
+      console.log(result);
+    } else {
+      console.log(
+        "libidn.so.11 NOT FOUND inside Ghostscript package."
+      );
+    }
+  } catch (error) {
+    console.log(
+      "libidn.so.11 NOT FOUND inside Ghostscript package."
+    );
   }
 
   console.log("========================================");
   console.log("DIAGNOSTIC COMPLETE");
   console.log("========================================");
 
-  const gsBinary = path.join(
-  GS_DIR,
-  "ghostscript_linux",
-  "usr",
-  "local",
-  "bin",
-  "gs"
-);
+  // Remove archive to keep the project clean.
+  if (fs.existsSync(ARCHIVE)) {
+    fs.unlinkSync(ARCHIVE);
+  }
 
-console.log("========================================");
-console.log("CHECKING GHOSTSCRIPT");
-console.log("========================================");
-
-console.log("Expected Ghostscript path:");
-console.log(gsBinary);
-
-if (!fs.existsSync(gsBinary)) {
-  throw new Error(
-    `Ghostscript binary was not found at ${gsBinary}`
-  );
-}
-
-fs.chmodSync(gsBinary, 0o755);
-
-console.log("Ghostscript found successfully:");
-console.log(gsBinary);
-
-console.log("========================================");
-console.log("CHECKING GHOSTSCRIPT DEPENDENCIES");
-console.log("========================================");
-
-try {
-  const dependencies = execSync(`ldd "${gsBinary}"`, {
-    encoding: "utf8",
-  });
-
-  console.log("Ghostscript dependencies:");
-  console.log(dependencies);
-} catch (error) {
-  console.error("Could not run ldd:");
-  console.error(error);
-}
-
-fs.unlinkSync(ARCHIVE);
-
-console.log("========================================");
-console.log("Ghostscript installation complete.");
-console.log("========================================");
+  console.log("Ghostscript archive removed.");
 }
 
 main().catch((error) => {
-  console.error("Ghostscript diagnostic failed:");
+  console.error("Ghostscript installation failed:");
   console.error(error);
   process.exit(1);
 });
