@@ -145,8 +145,53 @@ async function main() {
   console.log("DIAGNOSTIC COMPLETE");
   console.log("========================================");
 
-  // DO NOT FAIL THE BUILD YET.
-  // We only want to inspect the actual archive structure.
+  const gsBinary = path.join(
+  GS_DIR,
+  "ghostscript_linux",
+  "usr",
+  "local",
+  "bin",
+  "gs"
+);
+
+console.log("========================================");
+console.log("CHECKING GHOSTSCRIPT");
+console.log("========================================");
+
+console.log("Expected Ghostscript path:");
+console.log(gsBinary);
+
+if (!fs.existsSync(gsBinary)) {
+  throw new Error(
+    `Ghostscript binary was not found at ${gsBinary}`
+  );
+}
+
+fs.chmodSync(gsBinary, 0o755);
+
+console.log("Ghostscript found successfully:");
+console.log(gsBinary);
+
+console.log("Testing Ghostscript...");
+
+try {
+  const version = execSync(`"${gsBinary}" --version`, {
+    encoding: "utf8",
+  });
+
+  console.log("Ghostscript version:");
+  console.log(version.trim());
+} catch (error) {
+  console.error("Ghostscript exists but could not execute:");
+  console.error(error);
+  throw error;
+}
+
+fs.unlinkSync(ARCHIVE);
+
+console.log("========================================");
+console.log("Ghostscript installation complete.");
+console.log("========================================");
 }
 
 main().catch((error) => {

@@ -33,13 +33,14 @@ async function tryGhostscript(
     process.platform === "win32"
       ? "gswin64c"
       : path.join(
-        process.cwd(),
-        ".ghostscript",
-        "bin",
-        "gs",
-        "bin",
-        "gs"
-      );
+          process.cwd(),
+          ".ghostscript",
+          "ghostscript_linux",
+          "usr",
+          "local",
+          "bin",
+          "gs"
+        );
 
   try {
     await fs.writeFile(inputPath, input);
