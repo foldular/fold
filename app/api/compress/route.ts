@@ -29,18 +29,29 @@ async function tryGhostscript(
   const inputPath = path.join(tempDir, "input.pdf");
   const outputPath = path.join(tempDir, "output.pdf");
 
-  const gsExecutable =
-    process.platform === "win32"
-      ? "gswin64c"
-      : path.join(
-          process.cwd(),
-          ".ghostscript",
-          "ghostscript_linux",
-          "usr",
-          "local",
-          "bin",
-          "gs"
-        );
+const gsExecutable =
+  process.platform === "win32"
+    ? "gswin64c"
+    : path.join(
+        process.cwd(),
+        ".ghostscript",
+        "ghostscript_linux",
+        "usr",
+        "local",
+        "bin",
+        "gs"
+      );
+
+const gsLibDir =
+  process.platform === "win32"
+    ? undefined
+    : path.join(
+        process.cwd(),
+        ".ghostscript",
+        "ghostscript_linux",
+        "lib",
+        "x86_64-linux-gnu"
+      );
 
   try {
     await fs.writeFile(inputPath, input);
@@ -50,38 +61,56 @@ async function tryGhostscript(
     console.log("Compression level:", level);
     console.log("Ghostscript setting:", settings[level]);
 
-    await execFileAsync(gsExecutable, [
-      "-sDEVICE=pdfwrite",
-      "-dCompatibilityLevel=1.4",
-      `-dPDFSETTINGS=${settings[level]}`,
+await execFileAsync(
+  gsExecutable,
+  [
+    "-sDEVICE=pdfwrite",
+    "-dCompatibilityLevel=1.4",
+    `-dPDFSETTINGS=${settings[level]}`,
 
-      "-dDownsampleColorImages=true",
-      "-dColorImageDownsampleType=/Bicubic",
-      "-dColorImageResolution=100",
+    "-dDownsampleColorImages=true",
+    "-dColorImageDownsampleType=/Bicubic",
+    "-dColorImageResolution=100",
 
-      "-dDownsampleGrayImages=true",
-      "-dGrayImageDownsampleType=/Bicubic",
-      "-dGrayImageResolution=100",
+    "-dDownsampleGrayImages=true",
+    "-dGrayImageDownsampleType=/Bicubic",
+    "-dGrayImageResolution=100",
 
-      "-dDownsampleMonoImages=true",
-      "-dMonoImageDownsampleType=/Subsample",
-      "-dMonoImageResolution=150",
+    "-dDownsampleMonoImages=true",
+    "-dMonoImageDownsampleType=/Subsample",
+    "-dMonoImageResolution=150",
 
-      "-dAutoFilterColorImages=false",
-      "-dColorImageFilter=/DCTEncode",
+    "-dAutoFilterColorImages=false",
+    "-dColorImageFilter=/DCTEncode",
 
-      "-dAutoFilterGrayImages=false",
-      "-dGrayImageFilter=/DCTEncode",
+    "-dAutoFilterGrayImages=false",
+    "-dGrayImageFilter=/DCTEncode",
 
-      "-dJPEGQ=60",
+    "-dJPEGQ=60",
 
-      "-dNOPAUSE",
-      "-dQUIET",
-      "-dBATCH",
+    "-dNOPAUSE",
+    "-dQUIET",
+    "-dBATCH",
 
-      `-sOutputFile=${outputPath}`,
-      inputPath,
-    ]);
+    `-sOutputFile=${outputPath}`,
+    inputPath,
+  ],
+  {
+    env: {
+      ...process.env,
+      ...(gsLibDir
+        ? {
+            LD_LIBRARY_PATH: [
+              gsLibDir,
+              process.env.LD_LIBRARY_PATH || "",
+            ]
+              .filter(Boolean)
+              .join(":"),
+          }
+        : {}),
+    },
+  }
+);
 
     const output = await fs.readFile(outputPath);
 

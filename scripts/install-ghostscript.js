@@ -49,30 +49,8 @@ function download(url, destination) {
   });
 }
 
-function printTree(dir, prefix = "") {
-  if (!fs.existsSync(dir)) {
-    console.log(`DOES NOT EXIST: ${dir}`);
-    return;
-  }
-
-  const entries = fs.readdirSync(dir, {
-    withFileTypes: true,
-  });
-
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-
-    console.log(
-      `${prefix}${entry.isDirectory() ? "[DIR] " : "[FILE] "}${fullPath}`
-    );
-
-    if (entry.isDirectory()) {
-      printTree(fullPath, prefix + "  ");
-    }
-  }
-}
-
 async function main() {
+  // Only download Ghostscript when building on Linux.
   if (process.platform !== "linux") {
     console.log(
       "Ghostscript download skipped: not running on Linux."
@@ -81,24 +59,16 @@ async function main() {
   }
 
   console.log("========================================");
-  console.log("GHOSTSCRIPT INSTALLATION");
+  console.log("INSTALLING GHOSTSCRIPT");
   console.log("========================================");
 
   console.log("ROOT:");
   console.log(ROOT);
 
-  console.log("GS_DIR:");
+  console.log("Ghostscript directory:");
   console.log(GS_DIR);
 
-  console.log("ARCHIVE:");
-  console.log(ARCHIVE);
-
-  console.log("DOWNLOAD URL:");
-  console.log(URL);
-
-  console.log("========================================");
-
-  // Start clean
+  // Start clean.
   if (fs.existsSync(GS_DIR)) {
     fs.rmSync(GS_DIR, {
       recursive: true,
@@ -110,15 +80,15 @@ async function main() {
     recursive: true,
   });
 
+  if (fs.existsSync(ARCHIVE)) {
+    fs.unlinkSync(ARCHIVE);
+  }
+
   console.log("Downloading Linux Ghostscript...");
 
   await download(URL, ARCHIVE);
 
-  console.log("Archive downloaded:");
-  console.log(ARCHIVE);
-
-  console.log("Archive size:");
-  console.log(fs.statSync(ARCHIVE).size, "bytes");
+  console.log("Ghostscript archive downloaded.");
 
   console.log("========================================");
   console.log("Extracting Ghostscript...");
@@ -131,102 +101,113 @@ async function main() {
     }
   );
 
+  /*
+   * Actual structure discovered from the archive:
+   *
+   * .ghostscript/
+   * └── ghostscript_linux/
+   *     ├── lib/
+   *     │   └── x86_64-linux-gnu/
+   *     │       └── libidn.so.11
+   *     │
+   *     └── usr/
+   *         └── local/
+   *             └── bin/
+   *                 └── gs
+   */
+
+  const gsBinary = path.join(
+    GS_DIR,
+    "ghostscript_linux",
+    "usr",
+    "local",
+    "bin",
+    "gs"
+  );
+
+  const gsLibDir = path.join(
+    GS_DIR,
+    "ghostscript_linux",
+    "lib",
+    "x86_64-linux-gnu"
+  );
+
+  const libidn = path.join(
+    gsLibDir,
+    "libidn.so.11"
+  );
+
   console.log("========================================");
-  console.log("EXTRACTED FILE TREE");
+  console.log("CHECKING GHOSTSCRIPT");
   console.log("========================================");
 
-  printTree(GS_DIR);
-
-  console.log("========================================");
-  console.log("SEARCHING FOR GHOSTSCRIPT EXECUTABLE");
-  console.log("========================================");
-
-  let gsBinary = null;
-
-  try {
-    const result = execSync(
-      `find "${GS_DIR}" -type f -name "gs"`,
-      {
-        encoding: "utf8",
-      }
-    ).trim();
-
-    if (result) {
-      console.log("FOUND:");
-      console.log(result);
-
-      // Use the first matching Ghostscript binary
-      gsBinary = result.split("\n")[0].trim();
-    } else {
-      console.log("Ghostscript executable NOT FOUND.");
-    }
-  } catch (error) {
-    console.log("Could not search for Ghostscript executable.");
-  }
-
-  console.log("========================================");
-  console.log("GHOSTSCRIPT BINARY");
-  console.log("========================================");
-
-  if (!gsBinary) {
-    throw new Error(
-      "Ghostscript executable could not be found."
-    );
-  }
-
-  console.log("Using:");
+  console.log("Ghostscript binary:");
   console.log(gsBinary);
 
+  console.log("Ghostscript library directory:");
+  console.log(gsLibDir);
+
+  console.log("libidn.so.11:");
+  console.log(libidn);
+
+  if (!fs.existsSync(gsBinary)) {
+    throw new Error(
+      `Ghostscript binary was not found at ${gsBinary}`
+    );
+  }
+
+  if (!fs.existsSync(libidn)) {
+    throw new Error(
+      `libidn.so.11 was not found at ${libidn}`
+    );
+  }
+
+  // Make sure the binary can execute.
+  fs.chmodSync(gsBinary, 0o755);
+
+  /*
+   * Ghostscript requires libidn.so.11.
+   * Vercel does not provide this exact library,
+   * but the Ghostscript archive contains it.
+   *
+   * Tell Linux to search this directory for libraries.
+   */
+  process.env.LD_LIBRARY_PATH =
+    `${gsLibDir}:${process.env.LD_LIBRARY_PATH || ""}`;
+
+  console.log("LD_LIBRARY_PATH:");
+  console.log(process.env.LD_LIBRARY_PATH);
+
   console.log("========================================");
-  console.log("CHECKING GHOSTSCRIPT DEPENDENCIES");
+  console.log("TESTING GHOSTSCRIPT");
   console.log("========================================");
 
   try {
-    const dependencies = execSync(
-      `ldd "${gsBinary}"`,
+    const version = execSync(
+      `"${gsBinary}" --version`,
       {
         encoding: "utf8",
+        env: process.env,
       }
     );
 
-    console.log("Ghostscript dependencies:");
-    console.log(dependencies);
+    console.log("Ghostscript version:");
+    console.log(version.trim());
   } catch (error) {
-    console.error("Could not run ldd:");
+    console.error(
+      "Ghostscript exists but could not execute."
+    );
+
     console.error(error);
+
+    throw error;
   }
 
   console.log("========================================");
-  console.log("SEARCHING FOR libidn.so.11");
+  console.log("GHOSTSCRIPT INSTALLATION COMPLETE");
   console.log("========================================");
 
-  try {
-    const result = execSync(
-      `find "${GS_DIR}" -name "libidn.so.11*" -type f`,
-      {
-        encoding: "utf8",
-      }
-    ).trim();
-
-    if (result) {
-      console.log("libidn.so.11 FOUND:");
-      console.log(result);
-    } else {
-      console.log(
-        "libidn.so.11 NOT FOUND inside Ghostscript package."
-      );
-    }
-  } catch (error) {
-    console.log(
-      "libidn.so.11 NOT FOUND inside Ghostscript package."
-    );
-  }
-
-  console.log("========================================");
-  console.log("DIAGNOSTIC COMPLETE");
-  console.log("========================================");
-
-  // Remove archive to keep the project clean.
+  // Remove the downloaded archive.
   if (fs.existsSync(ARCHIVE)) {
     fs.unlinkSync(ARCHIVE);
   }
