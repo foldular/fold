@@ -3,41 +3,175 @@ import { promisify } from "util";
 import fs from "fs/promises";
 import os from "os";
 import path from "path";
-import { NextRequest, NextResponse } from "next/server";
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
 import { PDFDocument } from "pdf-lib";
 
-const execFileAsync = promisify(execFile);
+const execFileAsync =
+  promisify(execFile);
 
-const MAX_FILE_SIZE = 50 * 1024 * 1024;
+const MAX_FILE_SIZE =
+  50 * 1024 * 1024;
 
-type CompressionLevel = "strong" | "recommended" | "low";
+type CompressionLevel =
+  | "strong"
+  | "recommended"
+  | "low";
 
-const settings: Record<CompressionLevel, string> = {
+const settings: Record<
+  CompressionLevel,
+  string
+> = {
   strong: "/screen",
   recommended: "/ebook",
   low: "/printer",
 };
 
-const GHOSTSCRIPT_VERSION = "10.08.0";
+const GHOSTSCRIPT_VERSION =
+  "10.08.0";
+
+/*
+ * Count PDF font objects.
+ *
+ * This is intentionally a lightweight safety check.
+ * We are not trying to parse the complete PDF here.
+ *
+ * The important case:
+ *
+ *   original PDF -> has fonts
+ *   compressed PDF -> has zero fonts
+ *
+ * That means Ghostscript has almost certainly lost
+ * important text/font content.
+ */
+function countPdfFonts(
+  pdf: Buffer
+): number {
+  const content =
+    pdf.toString("latin1");
+
+  const matches =
+    content.match(
+      /\/Type\s*\/Font\b/g
+    );
+
+  return matches?.length ?? 0;
+}
+
+/*
+ * Make sure the Ghostscript output is structurally
+ * sane before returning it to the user.
+ */
+async function validatePdfOutput(
+  input: Buffer,
+  output: Buffer
+): Promise<boolean> {
+  try {
+    const inputPdf =
+      await PDFDocument.load(
+        input
+      );
+
+    const outputPdf =
+      await PDFDocument.load(
+        output
+      );
+
+    /*
+     * Page count must remain identical.
+     */
+    if (
+      inputPdf.getPageCount() !==
+      outputPdf.getPageCount()
+    ) {
+      console.error(
+        "Compression safety check failed: page count changed.",
+        {
+          inputPages:
+            inputPdf.getPageCount(),
+
+          outputPages:
+            outputPdf.getPageCount(),
+        }
+      );
+
+      return false;
+    }
+
+    /*
+     * If the input contains PDF font resources,
+     * the output must not suddenly contain zero.
+     */
+    const inputFonts =
+      countPdfFonts(input);
+
+    const outputFonts =
+      countPdfFonts(output);
+
+    console.log(
+      "Font safety check:",
+      {
+        inputFonts,
+        outputFonts,
+      }
+    );
+
+    if (
+      inputFonts > 0 &&
+      outputFonts === 0
+    ) {
+      console.error(
+        "Compression safety check failed: all font resources disappeared."
+      );
+
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error(
+      "Compression safety validation failed:",
+      error
+    );
+
+    return false;
+  }
+}
 
 async function tryGhostscript(
   input: Buffer,
   level: CompressionLevel
 ): Promise<Buffer | null> {
-  const tempDir = await fs.mkdtemp(
-    path.join(os.tmpdir(), "fold-compress-")
-  );
+  const tempDir =
+    await fs.mkdtemp(
+      path.join(
+        os.tmpdir(),
+        "fold-compress-"
+      )
+    );
 
-  const inputPath = path.join(tempDir, "input.pdf");
-  const outputPath = path.join(tempDir, "output.pdf");
+  const inputPath =
+    path.join(
+      tempDir,
+      "input.pdf"
+    );
+
+  const outputPath =
+    path.join(
+      tempDir,
+      "output.pdf"
+    );
 
   /*
    * Windows:
-   * Use the locally installed gswin64c executable.
+   *
+   * Use locally installed gswin64c.
    *
    * Linux/Vercel:
-   * Use the Ghostscript binary built by
-   * scripts/install-ghostscript.js
+   *
+   * Use our bundled Ghostscript build.
    */
   const gsRoot =
     process.platform === "win32"
@@ -58,8 +192,7 @@ async function tryGhostscript(
         );
 
   /*
-   * Ghostscript shared libraries installed by
-   * `make install`.
+   * Bundled shared libraries.
    */
   const gsLibDir =
     process.platform === "win32"
@@ -70,10 +203,7 @@ async function tryGhostscript(
         );
 
   /*
-   * Ghostscript initialization files/resources.
-   *
-   * GS_LIB allows Ghostscript to find gs_init.ps,
-   * pdf_*.ps, Fontmap and related runtime files.
+   * Ghostscript resource directory.
    */
   const gsShareDir =
     process.platform === "win32"
@@ -85,77 +215,119 @@ async function tryGhostscript(
           GHOSTSCRIPT_VERSION
         );
 
-  const gsLibResourceDir =
+  /*
+   * Ghostscript fonts.
+   */
+  const gsFontsDir =
     process.platform === "win32"
       ? null
       : path.join(
-          gsShareDir!,
-          "lib"
-        );
-
-  const gsResourceDir =
-    process.platform === "win32"
-      ? null
-      : path.join(
-          gsShareDir!,
-          "Resource"
+          gsRoot!,
+          "share",
+          "ghostscript",
+          "fonts"
         );
 
   try {
-    await fs.writeFile(inputPath, input);
+    await fs.writeFile(
+      inputPath,
+      input
+    );
 
-    console.log("=================================");
-    console.log("Fold compression");
-    console.log("=================================");
-    console.log("Platform:", process.platform);
-    console.log("Ghostscript:", gsExecutable);
-    console.log("Compression level:", level);
+    console.log(
+      "================================="
+    );
+
+    console.log(
+      "Fold PDF compression"
+    );
+
+    console.log(
+      "================================="
+    );
+
+    console.log(
+      "Platform:",
+      process.platform
+    );
+
+    console.log(
+      "Ghostscript:",
+      gsExecutable
+    );
+
+    console.log(
+      "Compression level:",
+      level
+    );
+
     console.log(
       "Ghostscript setting:",
       settings[level]
     );
 
-    if (process.platform !== "win32") {
-      console.log(
-        "Ghostscript library directory:",
-        gsLibDir
-      );
-
-      console.log(
-        "Ghostscript share directory:",
-        gsShareDir
-      );
-    }
-
     /*
-     * Build environment.
-     *
-     * Windows:
-     * Keep the existing environment.
-     *
-     * Linux:
-     * Add our bundled Ghostscript libraries/resources.
+     * ----------------------------------------------------------
+     * Environment
+     * ----------------------------------------------------------
      */
+
     const env =
       process.platform === "win32"
         ? process.env
         : {
             ...process.env,
 
+            /*
+             * Find our bundled shared libraries.
+             */
             LD_LIBRARY_PATH: [
               gsLibDir,
-              process.env.LD_LIBRARY_PATH || "",
+              process.env
+                .LD_LIBRARY_PATH || "",
             ]
               .filter(Boolean)
               .join(":"),
 
+            /*
+             * Find Ghostscript's initialization
+             * and resource files.
+             */
             GS_LIB: [
-              gsLibDirResourceExists(gsLibResourceDir)
-                ? gsLibResourceDir
-                : "",
-              gsResourceDir,
               gsShareDir,
+
+              gsShareDir
+                ? path.join(
+                    gsShareDir,
+                    "lib"
+                  )
+                : "",
+
+              gsShareDir
+                ? path.join(
+                    gsShareDir,
+                    "Resource"
+                  )
+                : "",
+
               process.env.GS_LIB || "",
+            ]
+              .filter(Boolean)
+              .join(":"),
+
+            /*
+             * Give Ghostscript access to fonts
+             * installed by our runtime and common
+             * Linux font locations.
+             */
+            GS_FONTPATH: [
+              gsFontsDir,
+
+              "/usr/share/fonts",
+
+              "/usr/local/share/fonts",
+
+              process.env.GS_FONTPATH || "",
             ]
               .filter(Boolean)
               .join(":"),
@@ -175,41 +347,96 @@ async function tryGhostscript(
         : env.GS_LIB
     );
 
+    console.log(
+      "GS_FONTPATH:",
+      process.platform === "win32"
+        ? "Windows"
+        : env.GS_FONTPATH
+    );
+
     /*
-     * Run Ghostscript.
+     * ----------------------------------------------------------
+     * Ghostscript
+     * ----------------------------------------------------------
      */
+
     await execFileAsync(
       gsExecutable,
       [
+        /*
+         * PDF output.
+         */
         "-sDEVICE=pdfwrite",
 
+        /*
+         * Keep modern PDF transparency support.
+         */
         "-dCompatibilityLevel=1.4",
 
+        /*
+         * Fold compression profile.
+         */
         `-dPDFSETTINGS=${settings[level]}`,
 
         /*
-         * Color images
+         * ------------------------------------------------------
+         * FONT SAFETY
+         * ------------------------------------------------------
+         *
+         * Explicitly preserve/embed fonts.
          */
+        "-dEmbedAllFonts=true",
+        "-dEmbedSubstituteFonts=true",
+        "-dSubsetFonts=true",
+        "-dCompressFonts=true",
+
+        /*
+         * Don't allow the default NeverEmbed list to
+         * silently remove fonts.
+         *
+         * This is passed through PostScript because
+         * distiller parameters are configured that way.
+         */
+        "-c",
+        "<< /NeverEmbed [ ] >> setdistillerparams",
+
+        /*
+         * ------------------------------------------------------
+         * DOCUMENT CONTENT PRESERVATION
+         * ------------------------------------------------------
+         */
+
+        /*
+         * Preserve annotations where Ghostscript supports them.
+         */
+        "-dPreserveAnnots=true",
+
+        /*
+         * Preserve marked content / optional content.
+         */
+        "-dPreserveMarkedContent=true",
+        "-dWantsOptionalContent=true",
+
+        /*
+         * ------------------------------------------------------
+         * IMAGE COMPRESSION
+         * ------------------------------------------------------
+         */
+
         "-dDownsampleColorImages=true",
         "-dColorImageDownsampleType=/Bicubic",
         "-dColorImageResolution=100",
 
-        /*
-         * Grayscale images
-         */
         "-dDownsampleGrayImages=true",
         "-dGrayImageDownsampleType=/Bicubic",
         "-dGrayImageResolution=100",
 
-        /*
-         * Monochrome images
-         */
         "-dDownsampleMonoImages=true",
         "-dMonoImageDownsampleType=/Subsample",
         "-dMonoImageResolution=150",
 
         /*
-         * JPEG compression
+         * JPEG compression.
          */
         "-dAutoFilterColorImages=false",
         "-dColorImageFilter=/DCTEncode",
@@ -220,30 +447,40 @@ async function tryGhostscript(
         "-dJPEGQ=60",
 
         /*
-         * Batch/non-interactive mode.
+         * Non-interactive.
          */
         "-dNOPAUSE",
         "-dQUIET",
         "-dBATCH",
 
         /*
-         * Input/output.
+         * Output.
          */
         `-sOutputFile=${outputPath}`,
+
+        /*
+         * Input.
+         */
         inputPath,
       ],
       {
         env,
-        maxBuffer: 20 * 1024 * 1024,
+
+        maxBuffer:
+          20 * 1024 * 1024,
       }
     );
 
     /*
-     * Make sure Ghostscript actually generated output.
+     * ----------------------------------------------------------
+     * Read output
+     * ----------------------------------------------------------
      */
-    const output = await fs.readFile(
-      outputPath
-    );
+
+    const output =
+      await fs.readFile(
+        outputPath
+      );
 
     console.log(
       "Original:",
@@ -266,16 +503,42 @@ async function tryGhostscript(
     }
 
     /*
-     * Only use Ghostscript output if it is
-     * actually smaller.
+     * Must actually be smaller.
      */
-    if (output.length >= input.length) {
+    if (
+      output.length >=
+      input.length
+    ) {
       console.log(
         "Ghostscript output is not smaller. Keeping original."
       );
 
       return null;
     }
+
+    /*
+     * ----------------------------------------------------------
+     * SAFETY CHECK
+     * ----------------------------------------------------------
+     */
+
+    const valid =
+      await validatePdfOutput(
+        input,
+        output
+      );
+
+    if (!valid) {
+      console.error(
+        "Ghostscript produced an unsafe PDF. Rejecting output."
+      );
+
+      return null;
+    }
+
+    console.log(
+      "Ghostscript output passed safety validation."
+    );
 
     return output;
   } catch (error) {
@@ -286,31 +549,13 @@ async function tryGhostscript(
 
     return null;
   } finally {
-    /*
-     * Remove temporary input/output files.
-     */
-    await fs.rm(tempDir, {
-      recursive: true,
-      force: true,
-    });
-  }
-}
-
-/*
- * Helper used only to avoid putting a non-existent
- * directory into GS_LIB.
- */
-function gsLibDirResourceExists(
-  directory: string | null
-): boolean {
-  if (!directory) {
-    return false;
-  }
-
-  try {
-    return require("fs").existsSync(directory);
-  } catch {
-    return false;
+    await fs.rm(
+      tempDir,
+      {
+        recursive: true,
+        force: true,
+      }
+    );
   }
 }
 
@@ -318,9 +563,10 @@ async function fallbackCompression(
   input: Buffer
 ): Promise<Buffer | null> {
   try {
-    const pdf = await PDFDocument.load(
-      input
-    );
+    const pdf =
+      await PDFDocument.load(
+        input
+      );
 
     const outputPdf =
       await PDFDocument.create();
@@ -336,7 +582,7 @@ async function fallbackCompression(
     }
 
     /*
-     * Remove unnecessary document metadata.
+     * Remove unnecessary metadata.
      */
     outputPdf.setTitle("");
     outputPdf.setAuthor("");
@@ -351,11 +597,35 @@ async function fallbackCompression(
         addDefaultPage: false,
       });
 
-    if (output.length >= input.length) {
+    if (
+      output.length >=
+      input.length
+    ) {
       return null;
     }
 
-    return Buffer.from(output);
+    const outputBuffer =
+      Buffer.from(output);
+
+    /*
+     * Apply exactly the same safety check
+     * to the fallback.
+     */
+    const valid =
+      await validatePdfOutput(
+        input,
+        outputBuffer
+      );
+
+    if (!valid) {
+      console.error(
+        "pdf-lib fallback failed safety validation."
+      );
+
+      return null;
+    }
+
+    return outputBuffer;
   } catch (error) {
     console.error(
       "Fallback compression failed:",
@@ -380,8 +650,11 @@ export async function POST(
       formData.get("level");
 
     /*
-     * Validate uploaded file.
+     * ----------------------------------------------------------
+     * File validation
+     * ----------------------------------------------------------
      */
+
     if (
       !(uploadedFile instanceof File)
     ) {
@@ -396,9 +669,6 @@ export async function POST(
       );
     }
 
-    /*
-     * Validate extension.
-     */
     if (
       !uploadedFile.name
         .toLowerCase()
@@ -415,10 +685,9 @@ export async function POST(
       );
     }
 
-    /*
-     * Validate empty file.
-     */
-    if (uploadedFile.size === 0) {
+    if (
+      uploadedFile.size === 0
+    ) {
       return NextResponse.json(
         {
           error:
@@ -430,9 +699,6 @@ export async function POST(
       );
     }
 
-    /*
-     * 50 MB limit.
-     */
     if (
       uploadedFile.size >
       MAX_FILE_SIZE
@@ -449,8 +715,11 @@ export async function POST(
     }
 
     /*
-     * Validate compression level.
+     * ----------------------------------------------------------
+     * Compression level
+     * ----------------------------------------------------------
      */
+
     const level: CompressionLevel =
       levelValue === "strong" ||
       levelValue === "recommended" ||
@@ -459,35 +728,55 @@ export async function POST(
         : "recommended";
 
     /*
-     * Convert uploaded file to Buffer.
+     * ----------------------------------------------------------
+     * Input buffer
+     * ----------------------------------------------------------
      */
-    const input = Buffer.from(
-      await uploadedFile.arrayBuffer()
+
+    const input =
+      Buffer.from(
+        await uploadedFile.arrayBuffer()
+      );
+
+    console.log(
+      "================================="
     );
 
-    console.log("=================================");
     console.log(
       "Fold PDF compression started"
     );
+
     console.log(
       "File:",
       uploadedFile.name
     );
+
     console.log(
       "Original size:",
       input.length,
       "bytes"
     );
+
+    console.log(
+      "Original font resources:",
+      countPdfFonts(input)
+    );
+
     console.log(
       "Level:",
       level
     );
-    console.log("=================================");
+
+    console.log(
+      "================================="
+    );
 
     /*
-     * First attempt:
-     * Ghostscript.
+     * ----------------------------------------------------------
+     * First attempt: Ghostscript
+     * ----------------------------------------------------------
      */
+
     let output =
       await tryGhostscript(
         input,
@@ -495,9 +784,11 @@ export async function POST(
       );
 
     /*
-     * Second attempt:
-     * pdf-lib fallback.
+     * ----------------------------------------------------------
+     * Second attempt: pdf-lib
+     * ----------------------------------------------------------
      */
+
     if (!output) {
       console.log(
         "Trying pdf-lib fallback..."
@@ -510,26 +801,36 @@ export async function POST(
     }
 
     /*
-     * If neither method produced a
-     * smaller PDF, return original.
+     * ----------------------------------------------------------
+     * Final fallback: original
+     * ----------------------------------------------------------
+     *
+     * We would rather return the original PDF than
+     * ever give the user a damaged document.
      */
+
     if (
       !output ||
-      output.length >= input.length
+      output.length >=
+        input.length
     ) {
       console.log(
-        "No smaller version produced. Returning original PDF."
+        "No safe smaller version produced. Returning original PDF."
       );
 
       output = input;
     }
 
     const wasReduced =
-      output.length < input.length;
+      output.length <
+      input.length;
 
     /*
-     * Generate download filename.
+     * ----------------------------------------------------------
+     * Download filename
+     * ----------------------------------------------------------
      */
+
     const baseName =
       uploadedFile.name.replace(
         /\.pdf$/i,
@@ -540,8 +841,11 @@ export async function POST(
       `${baseName}-compressed.pdf`;
 
     /*
-     * Calculate reduction percentage.
+     * ----------------------------------------------------------
+     * Reduction
+     * ----------------------------------------------------------
      */
+
     const reductionPercent =
       wasReduced
         ? (
@@ -552,25 +856,41 @@ export async function POST(
           ).toFixed(1)
         : "0.0";
 
-    console.log("=================================");
+    console.log(
+      "================================="
+    );
+
     console.log(
       "Final output:",
       output.length,
       "bytes"
     );
+
+    console.log(
+      "Final font resources:",
+      countPdfFonts(output)
+    );
+
     console.log(
       "Reduced:",
       wasReduced
     );
+
     console.log(
       "Reduction:",
       `${reductionPercent}%`
     );
-    console.log("=================================");
+
+    console.log(
+      "================================="
+    );
 
     /*
-     * Return compressed PDF.
+     * ----------------------------------------------------------
+     * Response
+     * ----------------------------------------------------------
      */
+
     return new Response(
       new Uint8Array(output),
       {
