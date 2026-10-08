@@ -8,6 +8,7 @@ const GS_DIR = path.join(ROOT, ".ghostscript");
 const ARCHIVE = path.join(ROOT, "ghostscript-10.08.0.tar.xz");
 
 const GHOSTSCRIPT_VERSION = "10.08.0";
+
 const GHOSTSCRIPT_URL =
   `https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10080/ghostscript-${GHOSTSCRIPT_VERSION}.tar.xz`;
 
@@ -40,7 +41,9 @@ function download(url, destination) {
         }
 
         reject(
-          new Error(`Download failed with HTTP ${response.statusCode}`)
+          new Error(
+            `Download failed with HTTP ${response.statusCode}`
+          )
         );
 
         return;
@@ -87,11 +90,11 @@ function runCapture(command, args, options = {}) {
 
 async function main() {
   /*
-   * Ghostscript is built only during the Linux/Vercel build.
-   * Windows development continues to use the locally installed
-   * gswin64c executable.
+   * Ghostscript is built only during Linux/Vercel builds.
+   *
+   * Windows development continues to use the local
+   * gswin64c installation.
    */
-
   if (process.platform !== "linux") {
     console.log(
       "Ghostscript build skipped: not running on Linux."
@@ -101,19 +104,25 @@ async function main() {
 
   if (process.arch !== "x64") {
     throw new Error(
-      `This Ghostscript build currently expects x86_64. Detected: ${process.arch}`
+      `This Ghostscript build requires x86_64. Detected: ${process.arch}`
     );
   }
 
   console.log("========================================");
   console.log("BUILDING GHOSTSCRIPT FOR VERCEL");
   console.log("========================================");
+
   console.log("Platform:", process.platform);
   console.log("Architecture:", process.arch);
-  console.log("Ghostscript:", GHOSTSCRIPT_VERSION);
+  console.log(
+    "Ghostscript:",
+    GHOSTSCRIPT_VERSION
+  );
 
   /*
-   * Start clean so stale binaries/libraries can never be reused.
+   * ------------------------------------------------------------
+   * 1. Clean old installation
+   * ------------------------------------------------------------
    */
 
   if (fs.existsSync(GS_DIR)) {
@@ -133,12 +142,14 @@ async function main() {
 
   /*
    * ------------------------------------------------------------
-   * 1. Download official Ghostscript source
+   * 2. Download official Ghostscript source
    * ------------------------------------------------------------
    */
 
   console.log("========================================");
-  console.log("DOWNLOADING OFFICIAL GHOSTSCRIPT SOURCE");
+  console.log(
+    "DOWNLOADING OFFICIAL GHOSTSCRIPT SOURCE"
+  );
   console.log("========================================");
 
   console.log(GHOSTSCRIPT_URL);
@@ -148,9 +159,13 @@ async function main() {
     ARCHIVE
   );
 
+  console.log(
+    "Ghostscript source downloaded."
+  );
+
   /*
    * ------------------------------------------------------------
-   * 2. Extract Ghostscript
+   * 3. Extract
    * ------------------------------------------------------------
    */
 
@@ -190,7 +205,7 @@ async function main() {
 
   /*
    * ------------------------------------------------------------
-   * 3. Installation directory
+   * 4. Installation directory
    * ------------------------------------------------------------
    */
 
@@ -201,12 +216,20 @@ async function main() {
 
   /*
    * ------------------------------------------------------------
-   * 4. Configure Ghostscript
+   * 5. Configure
    * ------------------------------------------------------------
    *
    * IMPORTANT:
-   * --without-libidn prevents the old libidn.so.11 dependency
-   * that caused the previous Vercel build to fail.
+   *
+   * We deliberately DO NOT use:
+   *
+   *   --disable-fontconfig
+   *
+   * Ghostscript should configure itself based on the
+   * libraries available in the Vercel build environment.
+   *
+   * We still disable unrelated optional components that
+   * are not required by Fold.
    */
 
   console.log("========================================");
@@ -217,14 +240,25 @@ async function main() {
     "./configure",
     [
       `--prefix=${installDir}`,
+
+      /*
+       * Avoid the old libidn.so.11 dependency.
+       */
       "--without-libidn",
+
+      /*
+       * Features Fold does not need.
+       */
       "--without-tesseract",
-      "--disable-fontconfig",
       "--disable-cups",
       "--disable-dbus",
       "--disable-gtk",
       "--disable-x",
       "--disable-contrib",
+
+      /*
+       * Use Ghostscript's bundled copies where supported.
+       */
       "--with-local-zlib",
       "--with-local-brotli",
     ],
@@ -235,7 +269,7 @@ async function main() {
 
   /*
    * ------------------------------------------------------------
-   * 5. Compile Ghostscript
+   * 6. Compile
    * ------------------------------------------------------------
    */
 
@@ -255,7 +289,7 @@ async function main() {
 
   /*
    * ------------------------------------------------------------
-   * 6. Install Ghostscript into .ghostscript/runtime
+   * 7. Install
    * ------------------------------------------------------------
    */
 
@@ -297,12 +331,14 @@ async function main() {
 
   /*
    * ------------------------------------------------------------
-   * 7. Check runtime dependencies
+   * 8. Check runtime dependencies
    * ------------------------------------------------------------
    */
 
   console.log("========================================");
-  console.log("CHECKING GHOSTSCRIPT DEPENDENCIES");
+  console.log(
+    "CHECKING GHOSTSCRIPT DEPENDENCIES"
+  );
   console.log("========================================");
 
   const env = {
@@ -317,9 +353,8 @@ async function main() {
   };
 
   /*
-   * Test Ghostscript version
+   * Ghostscript version test.
    */
-
   const version = runCapture(
     gsBinary,
     [
@@ -336,9 +371,8 @@ async function main() {
   );
 
   /*
-   * Check linked libraries
+   * Shared-library test.
    */
-
   const lddOutput = runCapture(
     "ldd",
     [
@@ -353,20 +387,55 @@ async function main() {
 
   if (/not found/i.test(lddOutput)) {
     throw new Error(
-      "Ghostscript has unresolved shared-library dependencies. See the ldd output above."
+      "Ghostscript has unresolved shared-library dependencies."
     );
   }
 
   /*
    * ------------------------------------------------------------
-   * 8. Clean source/archive
+   * 9. Verify installed runtime files
    * ------------------------------------------------------------
-   *
-   * Keep only:
-   *
-   * .ghostscript/runtime
-   *
-   * because that is what the deployed API needs.
+   */
+
+  const shareDir = path.join(
+    installDir,
+    "share",
+    "ghostscript",
+    GHOSTSCRIPT_VERSION
+  );
+
+  const fontsDir = path.join(
+    installDir,
+    "share",
+    "ghostscript",
+    "fonts"
+  );
+
+  console.log(
+    "Ghostscript share directory:"
+  );
+
+  console.log(shareDir);
+
+  console.log(
+    "Ghostscript fonts directory:"
+  );
+
+  console.log(fontsDir);
+
+  /*
+   * The share directory should exist after make install.
+   */
+  if (!fs.existsSync(shareDir)) {
+    console.warn(
+      "Warning: Ghostscript share directory was not found."
+    );
+  }
+
+  /*
+   * ------------------------------------------------------------
+   * 10. Clean source/archive
+   * ------------------------------------------------------------
    */
 
   console.log("========================================");
@@ -387,7 +456,7 @@ async function main() {
 
   /*
    * ------------------------------------------------------------
-   * 9. Final output
+   * 11. Final output
    * ------------------------------------------------------------
    */
 
@@ -403,6 +472,16 @@ async function main() {
   console.log(
     "Libraries:",
     gsLibDir
+  );
+
+  console.log(
+    "Share:",
+    shareDir
+  );
+
+  console.log(
+    "Fonts:",
+    fontsDir
   );
 }
 
