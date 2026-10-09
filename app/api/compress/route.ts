@@ -20,13 +20,18 @@ type CompressionLevel =
   | "recommended"
   | "low";
 
-const settings: Record<
-  CompressionLevel,
-  string
-> = {
-  strong: "/screen",
-  recommended: "/ebook",
-  low: "/printer",
+type CompressionProfile = {
+  pdfSettings: string;
+  colorDpi: number;
+  grayDpi: number;
+  monoDpi: number;
+  jpegQuality: number;
+};
+
+const settings: Record<CompressionLevel, CompressionProfile> = {
+  strong: { pdfSettings: "/screen", colorDpi: 72, grayDpi: 72, monoDpi: 150, jpegQuality: 45 },
+  recommended: { pdfSettings: "/ebook", colorDpi: 120, grayDpi: 120, monoDpi: 200, jpegQuality: 65 },
+  low: { pdfSettings: "/printer", colorDpi: 200, grayDpi: 200, monoDpi: 300, jpegQuality: 80 },
 };
 
 const GHOSTSCRIPT_VERSION =
@@ -61,9 +66,8 @@ function countPdfFonts(
 }
 
 /*
- * Make sure the output PDF is structurally sane before returning it.
- * The optional font check is disabled only for the pdf-lib fallback because
- * the raw-byte font regex is not a reliable PDF parser.
+ * Validate basic PDF structure before returning the result.
+ * The raw-byte font check is optional because it is not a complete PDF parser.
  */
 async function validatePdfOutput(
   input: Buffer,
@@ -75,29 +79,19 @@ async function validatePdfOutput(
     const outputPdf = await PDFDocument.load(output);
 
     if (inputPdf.getPageCount() !== outputPdf.getPageCount()) {
-      console.error(
-        "Compression safety check failed: page count changed.",
-        {
-          inputPages: inputPdf.getPageCount(),
-          outputPages: outputPdf.getPageCount(),
-        }
-      );
+      console.error("Compression safety check failed: page count changed.", {
+        inputPages: inputPdf.getPageCount(),
+        outputPages: outputPdf.getPageCount(),
+      });
       return false;
     }
 
     const inputFonts = countPdfFonts(input);
     const outputFonts = countPdfFonts(output);
-
-    console.log("Font safety check:", {
-      inputFonts,
-      outputFonts,
-      checkFonts,
-    });
+    console.log("Font safety check:", { inputFonts, outputFonts, checkFonts });
 
     if (checkFonts && inputFonts > 0 && outputFonts === 0) {
-      console.error(
-        "Compression safety check failed: all font resources disappeared."
-      );
+      console.error("Compression safety check failed: all font resources disappeared.");
       return false;
     }
 
@@ -229,10 +223,10 @@ async function tryGhostscript(
       level
     );
 
-    console.log(
-      "Ghostscript setting:",
-      settings[level]
-    );
+    const profile = settings[level];
+
+    console.log("Ghostscript setting:", profile.pdfSettings);
+    console.log("Compression profile:", profile);
 
     /*
      * ----------------------------------------------------------
@@ -333,50 +327,38 @@ async function tryGhostscript(
       [
         "-sDEVICE=pdfwrite",
         "-dCompatibilityLevel=1.4",
-        `-dPDFSETTINGS=${settings[level]}`,
-      
-        // Font preservation
+        `-dPDFSETTINGS=${profile.pdfSettings}`,
+
+        // Preserve text and font resources where possible.
         "-dEmbedAllFonts=true",
         "-dEmbedSubstituteFonts=true",
         "-dSubsetFonts=true",
         "-dCompressFonts=true",
-      
-        // Image compression
+
+        // Different image settings for each compression level.
         "-dDownsampleColorImages=true",
         "-dColorImageDownsampleType=/Bicubic",
-        "-dColorImageResolution=100",
-      
+        `-dColorImageResolution=${profile.colorDpi}`,
         "-dDownsampleGrayImages=true",
         "-dGrayImageDownsampleType=/Bicubic",
-        "-dGrayImageResolution=100",
-      
+        `-dGrayImageResolution=${profile.grayDpi}`,
         "-dDownsampleMonoImages=true",
         "-dMonoImageDownsampleType=/Subsample",
-        "-dMonoImageResolution=150",
-      
+        `-dMonoImageResolution=${profile.monoDpi}`,
+
         "-dAutoFilterColorImages=false",
         "-dColorImageFilter=/DCTEncode",
         "-dAutoFilterGrayImages=false",
         "-dGrayImageFilter=/DCTEncode",
-        "-dJPEGQ=60",
-      
+        `-dJPEGQ=${profile.jpegQuality}`,
+
         "-dPreserveAnnots=true",
         "-dPreserveMarkedContent=true",
         "-dWantsOptionalContent=true",
-      
         "-dNOPAUSE",
         "-dQUIET",
         "-dBATCH",
-      
-        // Specify the output BEFORE executing PostScript code.
         `-sOutputFile=${outputPath}`,
-      
-        // Override Ghostscript's default NeverEmbed list.
-        "-c",
-        "<< /NeverEmbed [] >> setdistillerparams",
-      
-        // Resume file processing after -c.
-        "-f",
         inputPath,
       ],
       {
