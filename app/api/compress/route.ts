@@ -64,10 +64,17 @@ function countPdfFonts(
  * Make sure the Ghostscript output is structurally
  * sane before returning it to the user.
  */
-async function validatePdfOutput(
-  input: Buffer,
-  output: Buffer
-): Promise<boolean> {
+if (
+  checkFonts &&
+  inputFonts > 0 &&
+  outputFonts === 0
+) {
+  console.error(
+    "Compression safety check failed: all font resources disappeared."
+  );
+
+  return false;
+}
   try {
     const inputPdf =
       await PDFDocument.load(
@@ -473,7 +480,8 @@ async function tryGhostscript(
     const valid =
       await validatePdfOutput(
         input,
-        output
+        outputBuffer,
+        false
       );
 
     if (!valid) {
