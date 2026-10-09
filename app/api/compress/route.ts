@@ -61,88 +61,49 @@ function countPdfFonts(
 }
 
 /*
- * Make sure the Ghostscript output is structurally
- * sane before returning it to the user.
+ * Make sure the output PDF is structurally sane before returning it.
+ * The optional font check is disabled only for the pdf-lib fallback because
+ * the raw-byte font regex is not a reliable PDF parser.
  */
-if (
-  checkFonts &&
-  inputFonts > 0 &&
-  outputFonts === 0
-) {
-  console.error(
-    "Compression safety check failed: all font resources disappeared."
-  );
-
-  return false;
-}
+async function validatePdfOutput(
+  input: Buffer,
+  output: Buffer,
+  checkFonts = true
+): Promise<boolean> {
   try {
-    const inputPdf =
-      await PDFDocument.load(
-        input
-      );
+    const inputPdf = await PDFDocument.load(input);
+    const outputPdf = await PDFDocument.load(output);
 
-    const outputPdf =
-      await PDFDocument.load(
-        output
-      );
-
-    /*
-     * Page count must remain identical.
-     */
-    if (
-      inputPdf.getPageCount() !==
-      outputPdf.getPageCount()
-    ) {
+    if (inputPdf.getPageCount() !== outputPdf.getPageCount()) {
       console.error(
         "Compression safety check failed: page count changed.",
         {
-          inputPages:
-            inputPdf.getPageCount(),
-
-          outputPages:
-            outputPdf.getPageCount(),
+          inputPages: inputPdf.getPageCount(),
+          outputPages: outputPdf.getPageCount(),
         }
       );
-
       return false;
     }
 
-    /*
-     * If the input contains PDF font resources,
-     * the output must not suddenly contain zero.
-     */
-    const inputFonts =
-      countPdfFonts(input);
+    const inputFonts = countPdfFonts(input);
+    const outputFonts = countPdfFonts(output);
 
-    const outputFonts =
-      countPdfFonts(output);
+    console.log("Font safety check:", {
+      inputFonts,
+      outputFonts,
+      checkFonts,
+    });
 
-    console.log(
-      "Font safety check:",
-      {
-        inputFonts,
-        outputFonts,
-      }
-    );
-
-    if (
-      inputFonts > 0 &&
-      outputFonts === 0
-    ) {
+    if (checkFonts && inputFonts > 0 && outputFonts === 0) {
       console.error(
         "Compression safety check failed: all font resources disappeared."
       );
-
       return false;
     }
 
     return true;
   } catch (error) {
-    console.error(
-      "Compression safety validation failed:",
-      error
-    );
-
+    console.error("Compression safety validation failed:", error);
     return false;
   }
 }
@@ -480,8 +441,7 @@ async function tryGhostscript(
     const valid =
       await validatePdfOutput(
         input,
-        outputBuffer,
-        false
+        output
       );
 
     if (!valid) {
@@ -570,7 +530,8 @@ async function fallbackCompression(
     const valid =
       await validatePdfOutput(
         input,
-        outputBuffer
+        outputBuffer,
+        false
       );
 
     if (!valid) {
