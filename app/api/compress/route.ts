@@ -410,7 +410,7 @@ async function tryGhostscript(
         // Resume file processing after -c.
         "-f",
         inputPath,
-      ]
+      ],
       {
         env,
 
