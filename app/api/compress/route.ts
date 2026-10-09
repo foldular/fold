@@ -363,106 +363,54 @@ async function tryGhostscript(
     await execFileAsync(
       gsExecutable,
       [
-        /*
-         * PDF output.
-         */
         "-sDEVICE=pdfwrite",
-
-        /*
-         * Keep modern PDF transparency support.
-         */
         "-dCompatibilityLevel=1.4",
-
-        /*
-         * Fold compression profile.
-         */
         `-dPDFSETTINGS=${settings[level]}`,
-
-        /*
-         * ------------------------------------------------------
-         * FONT SAFETY
-         * ------------------------------------------------------
-         *
-         * Explicitly preserve/embed fonts.
-         */
+      
+        // Font preservation
         "-dEmbedAllFonts=true",
         "-dEmbedSubstituteFonts=true",
         "-dSubsetFonts=true",
         "-dCompressFonts=true",
-
-        /*
-         * Don't allow the default NeverEmbed list to
-         * silently remove fonts.
-         *
-         * This is passed through PostScript because
-         * distiller parameters are configured that way.
-         */
-        "-c",
-        "<< /NeverEmbed [ ] >> setdistillerparams",
-
-        /*
-         * ------------------------------------------------------
-         * DOCUMENT CONTENT PRESERVATION
-         * ------------------------------------------------------
-         */
-
-        /*
-         * Preserve annotations where Ghostscript supports them.
-         */
-        "-dPreserveAnnots=true",
-
-        /*
-         * Preserve marked content / optional content.
-         */
-        "-dPreserveMarkedContent=true",
-        "-dWantsOptionalContent=true",
-
-        /*
-         * ------------------------------------------------------
-         * IMAGE COMPRESSION
-         * ------------------------------------------------------
-         */
-
+      
+        // Image compression
         "-dDownsampleColorImages=true",
         "-dColorImageDownsampleType=/Bicubic",
         "-dColorImageResolution=100",
-
+      
         "-dDownsampleGrayImages=true",
         "-dGrayImageDownsampleType=/Bicubic",
         "-dGrayImageResolution=100",
-
+      
         "-dDownsampleMonoImages=true",
         "-dMonoImageDownsampleType=/Subsample",
         "-dMonoImageResolution=150",
-
-        /*
-         * JPEG compression.
-         */
+      
         "-dAutoFilterColorImages=false",
         "-dColorImageFilter=/DCTEncode",
-
         "-dAutoFilterGrayImages=false",
         "-dGrayImageFilter=/DCTEncode",
-
         "-dJPEGQ=60",
-
-        /*
-         * Non-interactive.
-         */
+      
+        "-dPreserveAnnots=true",
+        "-dPreserveMarkedContent=true",
+        "-dWantsOptionalContent=true",
+      
         "-dNOPAUSE",
         "-dQUIET",
         "-dBATCH",
-
-        /*
-         * Output.
-         */
+      
+        // Specify the output BEFORE executing PostScript code.
         `-sOutputFile=${outputPath}`,
-
-        /*
-         * Input.
-         */
+      
+        // Override Ghostscript's default NeverEmbed list.
+        "-c",
+        "<< /NeverEmbed [] >> setdistillerparams",
+      
+        // Resume file processing after -c.
+        "-f",
         inputPath,
-      ],
+      ]
       {
         env,
 
